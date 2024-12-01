@@ -1,0 +1,84 @@
+@startuml
+title Real-Time Quiz System Architecture
+
+actor User as "User"
+participant MobileApp as "Mobile App"
+participant APIGateway as "API Gateway"
+participant Backend as "Backend"
+participant RDS as "Database (PostgreSQL)"
+participant Redis as "Redis Cache"
+participant WebSocket as "Real-Time WebSocket Server"
+participant Lambda as Lambda
+
+== Authentication ==
+User -> MobileApp: Login
+MobileApp -> APIGateway: REST API - Login Request
+APIGateway -> Backend: Validate Credentials
+Backend -> RDS: Check User in Database
+RDS --> Backend: Valid/Invalid User
+Backend --> APIGateway: Login Response
+APIGateway --> MobileApp: Authentication Token
+
+== Quiz Creation Process by Scheduler ==
+Lambda -> Backend: Invoke Create Quizzes
+Backend -> RDS: Insert 4 Quizzes (Vocabulary, Listening, Grammar, All)
+RDS --> Backend: Quiz Creation Confirmation
+Backend --> Lambda: Success (Quizzes Created)
+Backend --> Redis: Cache New Quiz Details
+
+== User Joins a Quiz ==
+User -> MobileApp: View Available Quizzes
+MobileApp -> APIGateway: REST API - Get Quiz List
+APIGateway -> Backend: Fetch Quizzes
+Backend -> RDS: Query Available Quizzes
+RDS --> Backend: Quiz List Data
+Backend --> APIGateway: Quiz List JSON
+APIGateway --> MobileApp: Display Quiz List
+
+User -> MobileApp: Select Quiz
+MobileApp -> APIGateway: REST API - Join Quiz
+APIGateway -> Backend: Add User to Quiz Session
+Backend -> RDS: Update Quiz Session Data
+RDS --> Backend: Confirmation
+Backend --> APIGateway: Joined Successfully
+APIGateway --> MobileApp: Quiz Session Joined
+
+== Real-Time Quiz Flow ==
+MobileApp -> WebSocket: Connect to WebSocket (Quiz ID, User ID)
+WebSocket --> MobileApp: Welcome to Quiz Session
+Backend -> Redis: Fetch Questions from Cache or Database
+Backend -> Redis: Push First Question and Start Countdown
+WebSocket -> MobileApp: WebSocket Broadcast (First Question)
+loop For Each Question
+  MobileApp -> User: Display Question
+  User -> MobileApp: Submit Answer
+  MobileApp -> WebSocket: Answer Submission
+  WebSocket -> Backend: Process Answer
+  Backend -> RDS: Fetch Correct Answer, Update Score
+  RDS --> Backend: Correct Answer, Updated Score
+  Backend --> Redis: Cache Updated Leaderboard
+  Redis --> WebSocket: Publish Updated Leaderboard
+  WebSocket -> MobileApp: Display Answer Feedback
+  MobileApp -> User: Highlight Answer (selected & correct)
+  MobileApp -> WebSocket: Fetch Leaderboard (Quiz ID, User ID)
+  WebSocket -> Redis: Retrieve Leaderboard Data
+  Redis --> WebSocket: Leaderboard + Nearby Scores
+  WebSocket --> MobileApp: Leaderboard with Nearby Scores
+  MobileApp -> User: Display Leaderboard
+  WebSocket -> MobileApp: WebSocket Broadcast (Next Question)
+end
+
+== Quiz End ==
+WebSocket -> Backend: Notify Quiz End
+Backend -> RDS: Save Final Scores and Leaderboard Snapshot
+RDS --> Backend: Success
+Backend -> Redis: Clear Quiz Cache
+WebSocket -> MobileApp: Broadcast Quiz End
+
+== Quiz Cleanup ==
+Lambda -> Backend: Invoke Quiz Cleanup
+Backend -> RDS: Delete Quizzes Older Than 30 Days
+RDS --> Backend: Success (Quiz Data Archived)
+Backend --> Lambda: Success (Cleanup Completed)
+
+@enduml
